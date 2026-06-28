@@ -1,0 +1,105 @@
+.priceBlock {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  border: 1px solid #e5e7eb;
+}
+
+.priceBlock.compact {
+  padding: 10px;
+}
+
+.title {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.compact .title {
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.compact .stats {
+  gap: 10px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.statLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.compact .statLabel {
+  font-size: 9px;
+}
+
+.statValue {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.compact .statValue {
+  font-size: 15px;
+}
+
+.statValue.min {
+  color: #10b981;
+}
+
+.statValue.max {
+  color: #dc2626;
+}
+
+.statValue.total {
+  color: #3b82f6;
+}
+
+.range {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.compact .range {
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.rangeLabel {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.compact .rangeLabel {
+  font-size: 10px;
+}
+
+.rangeValue {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.compact .rangeValue {
+  font-size: 11px;
+}

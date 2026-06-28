@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Configure npm to use HTTPS with strict SSL disabled (workaround for corporate SSL inspection)
+RUN npm config set strict-ssl false
+
+# Install dependencies
+COPY frontend/package*.json ./
+RUN npm ci --legacy-peer-deps
+
+# Copy source code
+COPY frontend/. .
+
+# Expose Next.js default port
+EXPOSE 3000
+
+# Start development server
+CMD ["npm", "run", "dev"]

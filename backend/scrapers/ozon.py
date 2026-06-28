@@ -1,0 +1,256 @@
+"""Ozon.by scraper implementation using undetected-chromedriver."""
+
+import os
+import re
+import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+from urllib.parse import quote_plus
+
+from .base import IScraper, ProductData
+
+# SSL cert fix for Python 3.14 on macOS
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
+
+# Lazy imports for heavyweight deps
+_webdriver = None  # uc module reference
+_browser = None    # uc.Chrome instance
+_executor = ThreadPoolExecutor(max_workers=1)
+_LOCK = asyncio.Lock()  # ensure one search at a time (single browser)
+
+
+def _get_browser():
+    """Get or create the shared undetected-chromedriver browser instance."""
+    global _webdriver, _browser
+    if _browser is None:
+        import undetected_chromedriver as uc
+        _webdriver = uc
+        options = uc.ChromeOptions()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--window-size=1280,800")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        # version_main must match installed Chrome version
+        _browser = uc.Chrome(headless=True, version_main=149, options=options)
+    return _browser
+
+
+def _close_browser():
+    """Close the shared browser instance."""
+    global _browser
+    if _browser is not None:
+        try:
+            _browser.quit()
+        except Exception:
+            pass
+        _browser = None
+
+
+def _parse_tiles(browser) -> list[ProductData]:
+    """Extract products from the currently loaded Ozon search page."""
+    from selenium.webdriver.common.by import By
+
+    tiles = browser.find_elements(By.CSS_SELECTOR, "[data-index]")
+    products = []
+    seen_names = set()
+
+    for tile in tiles:
+        try:
+            href = None
+            name = ""
+            # Each tile has 2-3 links pointing to the same product.
+            # Pick the longest text link = the product name (skip badge links).
+            links = tile.find_elements(By.CSS_SELECTOR, 'a[href*="/product/"]')
+            for link in links:
+                t = link.text.strip()
+                href = link.get_attribute("href")
+                if len(t) > len(name):
+                    name = t
+
+            if not name or len(name) < 10 or not href:
+                continue
+
+            # Extract BYN prices from THIS tile only
+            price_els = tile.find_elements(By.XPATH, './/*[contains(text(), "BYN")]')
+            prices = []
+            for pe in price_els:
+                text = pe.text.strip()
+                if "×" in text:
+                    continue  # skip installment "XX BYN × 12 мес"
+                match = re.search(r"([\d\u2009\s]+),(\d+)\s*BYN", text)
+                if match:
+                    int_part = match.group(1).replace("\u2009", "").replace(" ", "").replace("\xa0", "")
+                    dec_part = match.group(2)
+                    prices.append(float(f"{int_part}.{dec_part}"))
+
+            if not prices:
+                continue
+
+            current_price = min(prices)  # smallest = current price
+
+            # Deduplicate by truncated name
+            name_key = name[:60].lower()
+            if name_key in seen_names:
+                continue
+            seen_names.add(name_key)
+
+            products.append(ProductData(
+                name=name[:200],
+                price=round(current_price, 2),
+                store="Ozon",
+                url=href,
+            ))
+
+        except Exception:
+            continue
+
+    products.sort(key=lambda p: p.price)
+    return products[:30]
+
+
+def _on_search_page(browser) -> bool:
+    """Quick URL check: are we nominally on a /search/ page?
+
+    Variti sometimes redirects the search GET to the homepage outright.
+    A stronger junk check (_results_match_query) runs after parsing.
+    """
+    try:
+        current = browser.current_url or ""
+    except Exception:
+        return False
+    return "/search/" in current
+
+
+def _results_match_query(products: list[ProductData], query: str) -> bool:
+    """Did Ozon return actual search results, not recommendation junk?
+
+    Variti can serve a /search/ URL whose page body is filled with
+    homepage-style recommendation carousels (same `[data-index]` tiles,
+    unrelated products). The URL check alone can't catch this. We treat the
+    result as real only if at least one parsed tile's name contains the
+    query's STRONG model token — the alphanumeric ID unique to the product
+    (e.g. "af-ze7226-a"). Recommendation junk never contains it.
+    """
+    if not products:
+        return False
+    # Strong token = a query word with BOTH letters and digits.
+    import re
+    strong = [w.lower() for w in query.split()
+              if len(w) >= 2 and re.search(r"\d", w) and re.search(r"[a-zа-яё]", w.lower())]
+    if not strong:
+        # No strong token to anchor on — accept any results (can't tell).
+        return True
+    return any(s in p.name.lower() for p in products for s in strong)
+
+
+# Tracks whether the shared browser has done a homepage warmup yet.
+# A fresh undetected-chromedriver session that jumps straight to /search/
+# trips Variti more often than one that loads the homepage first (human-like).
+_warmed_up = False
+
+
+def _search_sync(query: str) -> list[ProductData]:
+    """
+    Synchronous Ozon search implementation.
+    Runs in a thread pool to not block the async event loop.
+
+    Anti-bot strategy (Variti serves junk ~80% of the time otherwise):
+      1. On a fresh browser, load the Ozon homepage first (human-like
+         warmup) before searching.
+      2. Navigate to the search URL, wait for tiles.
+      3. Reject the result if the URL was redirected away from /search/
+         OR if no parsed tile contains the query's strong model token
+         (recommendation junk lacks it).
+      4. On rejection, close + recreate the browser (fresh fingerprint)
+         and retry. Up to 3 attempts.
+    """
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    global _warmed_up
+
+    encoded = quote_plus(query)
+    url = f"https://www.ozon.by/search/?text={encoded}"
+
+    products: list[ProductData] = []
+    for attempt in range(5):
+        browser = _get_browser()
+        try:
+            # Human-like warmup: load homepage once per browser session.
+            if not _warmed_up:
+                browser.get("https://www.ozon.by/")
+                time.sleep(2)
+                _warmed_up = True
+
+            browser.get(url)
+
+            # Wait for product tiles to appear
+            WebDriverWait(browser, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-index]"))
+            )
+
+            # Give JS a moment to render
+            time.sleep(2)
+
+            # Scroll to trigger lazy loading
+            browser.execute_script("window.scrollBy(0, 800);")
+            time.sleep(1.5)
+
+            # Two-stage junk detection:
+            #   (a) URL redirected away from /search/ → homepage soft-block
+            #   (b) tiles present but none match the query's model token →
+            #       recommendation carousels served under a /search/ URL
+            if not _on_search_page(browser):
+                print(f"Ozon: redirected off /search/ "
+                      f"(url={browser.current_url[:60]}), recreating browser "
+                      f"(attempt {attempt + 1}/5)")
+                _close_browser()
+                _warmed_up = False
+                continue
+
+            products = _parse_tiles(browser)
+
+            if not _results_match_query(products, query):
+                print(f"Ozon: tiles are recommendation junk (no model token), "
+                      f"recreating browser (attempt {attempt + 1}/5)")
+                _close_browser()
+                _warmed_up = False
+                continue
+
+            return products
+
+        except Exception as e:
+            print(f"Ozon search error (attempt {attempt + 1}/5): {e}")
+            _close_browser()
+            _warmed_up = False
+            continue
+
+    return products
+
+
+class OzonScraper(IScraper):
+    """Scraper for Ozon.by marketplace.
+
+    Uses undetected-chromedriver with headless Chrome to bypass
+    Ozon's Variti anti-bot protection. Requires real Chrome installed.
+    Prices in BYN (Belarusian rubles).
+    """
+
+    store_name = "Ozon"
+
+    async def search(self, query: str) -> list[ProductData]:
+        """Search products on Ozon.by. Runs Selenium in a thread pool."""
+        async with _LOCK:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(_executor, _search_sync, query)
+
+    async def close(self) -> None:
+        """Close browser in thread pool."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_executor, _close_browser)

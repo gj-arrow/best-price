@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.pytest_cache/
+*.pytest_cache
+*.spec
+*.egg-info/
+.eggs/
+*.whl
+
+# Virtual environment
+venv/
+.venv/
+
+# Node / npm / yarn
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm/
+*.tsbuildinfo
+.next/next-env.d.ts
+
+# Next.js
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100*
+.fseventsd*
+.Spotlight-V100*
+.TemporaryItems*
+.Trashes*
+.VolumeIcon.icns
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# Project screenshots & generated images
+*.png
+!**/*.png  # keep pngs in subdirs if any
+!docs/**/*.png
+current-home.png
+google-dark-final.png
+google-dark-main-page.png
+google-dark-results-final.png
+google-dark-results-page.png
+homepage-final.png
+homepage-light.png
+homepage-redesign.png
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# Cache
+cache_version.json
+config.json
+
+# Test / coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# OS generated files
+ehthumbs.db
+Thumbs.db
+$RECYCLE.BIN/
+
+# Playwright / browser downloads
+.playwright-mcp/
