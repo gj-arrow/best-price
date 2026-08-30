@@ -16,7 +16,6 @@ from .kufar import KufarScraper
 from .five_element import FiveElementScraper
 from .amd import AmdScraper
 from .shop7745 import Shop7745Scraper
-from .google_ai import GoogleAiScraper
 
 
 class ScraperAggregator:
@@ -24,7 +23,7 @@ class ScraperAggregator:
     Aggregates multiple store scrapers for concurrent product search.
 
     Initializes 10 base scrapers (Onliner, WB, Ozon, Shop.by, Home1k, 360shop,
-    21vek, 5element, AMD, 7745) + optional Kufar (б/у) + Google AI (РФ)
+    21vek, 5element, AMD, 7745) + optional Kufar (б/у)
     and provides unified search interface with concurrent execution.
     """
 
@@ -49,7 +48,6 @@ class ScraperAggregator:
             Shop7745Scraper(),
         ]
         self._kufar = KufarScraper()
-        self._google_ai = GoogleAiScraper()
         self._include_kufar = include_kufar
         self._last_debug: list[dict] = []
 
@@ -92,9 +90,9 @@ class ScraperAggregator:
             return True
 
         name_lower = product.name.lower()
-        # нормализуем для storage типа "256 гб" vs "256gb" (гб/гб cyrillic → gb)
-        name_lower_norm = name_lower.replace("гб", "gb").replace("гбайт", "gb")
-        name_nospace = re.sub(r"[^a-zа-яё0-9]", "", name_lower_norm)
+        # нормализуем для storage типа "256 гб" vs "256gb" и размеров "45 мм" vs "45mm" (cyrillic → latin)
+        name_lower_norm = name_lower.replace("гб", "gb").replace("гбайт", "gb").replace("мм", "mm").replace("см", "cm")
+        name_nospace = re.sub(r"[^a-zа-яё0-9]", "", name_lower_norm).replace("мм", "mm")
 
         def _contains_word(haystack: str, needle: str) -> bool:
             # граница слова: через \b, чтобы "15" не матчило "150", "max" не матчило "maxi"
@@ -114,9 +112,13 @@ class ScraperAggregator:
 
         if strong:
             for s in strong:
-                s_norm = s.lower().replace("гб", "gb").replace("гбайт", "gb")
-                s_nospace = re.sub(r"[^a-zа-яё0-9]", "", s_norm)
+                s_norm = s.lower().replace("гб", "gb").replace("гбайт", "gb").replace("мм", "mm").replace("см", "cm")
+                s_nospace = re.sub(r"[^a-zа-яё0-9]", "", s_norm).replace("мм", "mm")
                 has = _contains_word(name_lower, s.lower()) or _contains_word(name_lower_norm, s_norm) or s_nospace in name_nospace
+                # также матчим 45mm → 45 мм (разнесённые токены)
+                if not has and re.match(r"^\d+mm$", s_nospace):
+                    num = re.match(r"^(\d+)mm$", s_nospace).group(1)
+                    has = _contains_word(name_lower_norm, num) and "mm" in name_lower_norm
                 # storage: "256gb" должен матчить "256 гб" / "256 gb" — уже покрыто nospace/norm
                 if not has:
                     return False
@@ -179,7 +181,7 @@ class ScraperAggregator:
                     return True
         return False
 
-    async def search_all(self, query: str, include_kufar: Optional[bool] = None, include_google_ai: bool = True) -> list[ProductData]:
+    async def search_all(self, query: str, include_kufar: Optional[bool] = None) -> list[ProductData]:
         """
         Search all stores concurrently for products matching the query.
         
@@ -190,7 +192,6 @@ class ScraperAggregator:
         Args:
             query: Search term/product name
             include_kufar: if True include Kufar.by (б/у)
-            include_google_ai: if True include Google AI (РФ) estimate
             
         Returns:
             List of ProductData objects from all stores, sorted by price
@@ -201,14 +202,10 @@ class ScraperAggregator:
         # Extract significant query words for relevance filtering
         query_words = self._extract_query_words(query)
 
-        # Create search tasks for all scrapers (+ optional Kufar + Google AI)
+        # Create search tasks for all scrapers (+ optional Kufar)
         scrapers_to_run = list(self.scrapers)
         if use_kufar:
             scrapers_to_run.append(self._kufar)
-        # Google AI (РФ) — всегда пробуем, быстрый фолбэк ~6с
-        # Не блокируем основной поиск: запускаем параллельно
-        if include_google_ai:
-            scrapers_to_run.append(self._google_ai)
         search_tasks = [scraper.search(query) for scraper in scrapers_to_run]
 
         # Execute all searches concurrently with graceful degradation
@@ -276,7 +273,7 @@ class ScraperAggregator:
 
     async def close(self) -> None:
         """Clean up resources for all scrapers."""
-        all_scrapers = list(self.scrapers) + [self._kufar, self._google_ai]
+        all_scrapers = list(self.scrapers) + [self._kufar]
         await asyncio.gather(
             *[scraper.close() for scraper in all_scrapers],
             return_exceptions=True

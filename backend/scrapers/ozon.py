@@ -110,22 +110,102 @@ def _parse_tiles(browser) -> list[ProductData]:
                 continue
 
             # Extract BYN prices from THIS tile only
+            # Ozon tile часто содержит 2 цены: полную (3 869,78 BYN) и
+            # месячный платёж рассрочки (898,70 BYN × 12 мес). В DOM они
+            # в разных <span> — проверка "×" in pe.text не ловит случай
+            # <span>898,70 BYN</span><span>× 4 мес</span>. Поэтому смотрим
+            # на весь tile.text и на соседей.
+            try:
+                tile_text = tile.text or ""
+            except Exception:
+                tile_text = ""
+
             price_els = tile.find_elements(By.XPATH, './/*[contains(text(), "BYN")]')
             prices = []
             for pe in price_els:
                 text = pe.text.strip()
-                if "×" in text:
-                    continue  # skip installment "XX BYN × 12 мес"
+                # быстрый отсев: если в самом элементе уже есть маркер рассрочки
+                if "×" in text or "мес" in text.lower() or "рассроч" in text.lower():
+                    continue
+                # контекст: родитель и соседний элемент (покрывает разнесённые span'ы)
+                try:
+                    parent_text = pe.find_element(By.XPATH, "..").text or ""
+                except Exception:
+                    parent_text = ""
+                try:
+                    sib = pe.find_element(By.XPATH, "following-sibling::*[1]")
+                    sib_text = sib.text or "" if sib else ""
+                except Exception:
+                    sib_text = ""
+                combined = f"{text} {parent_text} {sib_text}".lower()
+                if "×" in combined or "мес" in combined or "рассроч" in combined:
+                    continue
+
                 match = re.search(r"([\d\u2009\s]+),(\d+)\s*BYN", text)
-                if match:
-                    int_part = match.group(1).replace("\u2009", "").replace(" ", "").replace("\xa0", "")
-                    dec_part = match.group(2)
+                if not match:
+                    continue
+                # Дополнительно: если в tile.text рядом с этой ценой есть ×/мес/рассрочка
+                # — это точно платёж рассрочки, даже если он в другом span'е.
+                # Ищем цену в tile_text и смотрим ±30 символов.
+                try:
+                    raw_price = match.group(0)
+                    # ищем вхождение цены в tile_text (по цифрам, чтобы не зависеть от \u2009)
+                    price_digits = re.sub(r"[^\d,]", "", raw_price)
+                    idx = -1
+                    # пробуем найти по сырому куску
+                    if raw_price.strip() in tile_text:
+                        idx = tile_text.index(raw_price.strip())
+                    elif price_digits and price_digits in re.sub(r"[^\d,]", "", tile_text):
+                        # fallback — не можем точно локализовать, пропускаем проверку
+                        idx = -1
+                    if idx != -1:
+                        window = tile_text[max(0, idx - 2): idx + len(raw_price) + 30].lower()
+                        if "×" in window or "мес" in window or "рассроч" in window:
+                            continue
+                except Exception:
+                    pass
+
+                int_part = match.group(1).replace("\u2009", "").replace(" ", "").replace("\xa0", "")
+                dec_part = match.group(2)
+                try:
                     prices.append(float(f"{int_part}.{dec_part}"))
+                except ValueError:
+                    continue
+
+            # Fallback: если ничего не нашли через per-element, пробуем распарсить весь tile.text
+            # (покрывает случай когда BYN в псевдоэлементе / shadow)
+            if not prices and tile_text:
+                for m in re.finditer(r"([\d\u2009\s]+),(\d+)\s*BYN", tile_text):
+                    after = tile_text[m.end(): m.end() + 30].lower()
+                    before = tile_text[max(0, m.start() - 20): m.start()].lower()
+                    if "×" in after or "мес" in after or "рассроч" in after or "рассроч" in before:
+                        continue
+                    # также пропустим если после цены сразу × в after
+                    if "×" in m.group(0):
+                        continue
+                    int_part = m.group(1).replace("\u2009", "").replace(" ", "").replace("\xa0", "")
+                    dec_part = m.group(2)
+                    try:
+                        prices.append(float(f"{int_part}.{dec_part}"))
+                    except ValueError:
+                        continue
 
             if not prices:
                 continue
 
-            current_price = min(prices)  # smallest = current price
+            # Эвристика: месячный платёж всегда << полной цены.
+            # Если в тайле остались [3869, 898], 898 < 0.45*3869 → выкидываем рассрочку.
+            # Карта Ozon даёт -5..10%, поэтому 0.45 безопасен (не тронет скидку по карте).
+            if len(prices) >= 2:
+                prices.sort()
+                # пока минимальный сильно меньше максимального — это рассрочка/кэшбек-платёж
+                while len(prices) >= 2 and min(prices) < 0.45 * max(prices):
+                    prices.pop(0)
+
+            if not prices:
+                continue
+
+            current_price = min(prices)  # после фильтрации — реальная цена (с картой если есть)
 
             # Deduplicate by truncated name
             name_key = name[:60].lower()

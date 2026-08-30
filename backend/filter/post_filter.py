@@ -20,20 +20,37 @@ def filter_products(canonical: str, products: list) -> list:
     # storage sizes optional (не требуем точный объём)
     storage_sizes = {"32","64","128","256","512","1024","2048","256gb","512gb","128gb","64gb"}
     must = [w.lower() for w in re.split(r"[\s\-]+", canonical.lower()) if w.lower() not in stopwords and len(w) >= 2]
+    # нормализуем единицы измерения в must: 45mm → 45 mm оба варианта
+    def _norm(s: str) -> str:
+        return s.replace("мм", "mm").replace("см", "cm").replace("гб", "gb")
+    must_norm = [_norm(w) for w in must]
     out = []
     for p in products:
-        name_l = p.name.lower()
+        name_l = _norm(p.name.lower())
+        # для 45mm → матчим и 45 мм (разнесённые)
+        name_nospace = re.sub(r"[^a-z0-9]", "", name_l)
         if is_accessory(p.name):
             continue
         # storage опционален, модельные цифры (15,17) — обязательны
-        required = [t for t in must if t not in storage_sizes and not re.match(r"^\d+gb?$", t)]
-        # но если t isdigit и в storage_sizes — пропускаем, иначе требуем
-        # фактически выше уже исключает storage, оставляем 15, 17 и т.д.
-        # костыль: если required содержит iphone, apple уже убран; если galaxy — samsung опционален (уже стоп? нет, samsung остаётся, но galaxy уже уникален)
-        # для galaxy делаем samsung опциональным если есть galaxy
-        if "galaxy" in must and "samsung" in required:
+        required = [t for t in must_norm if t not in storage_sizes and not re.match(r"^\d+gb?$", t)]
+        if "galaxy" in must_norm and "samsung" in required:
             required = [t for t in required if t != "samsung"]
-        if not all(t in name_l for t in required):
+        ok = True
+        for t in required:
+            if t in name_l or t in name_nospace:
+                continue
+            # 45mm в canonical, а в имени 45 мм → t=45mm, name_l=45 мм → проверяем число + mm
+            if re.match(r"^\d+mm$", t):
+                num = re.match(r"^(\d+)mm$", t).group(1)
+                if num in name_l and "mm" in name_l:
+                    continue
+            if re.match(r"^\d+cm$", t):
+                num = re.match(r"^(\d+)cm$", t).group(1)
+                if num in name_l and "cm" in name_l:
+                    continue
+            ok = False
+            break
+        if not ok:
             continue
         out.append(p)
     return out

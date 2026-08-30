@@ -96,3 +96,7 @@ $RECYCLE.BIN/
 
 # Playwright / browser downloads
 .playwright-mcp/
+.claude/
+.claude-flow/metrics/swarm-activity.json
+.claude-flow/
+.mcp.json

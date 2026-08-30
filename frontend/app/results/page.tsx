@@ -471,17 +471,17 @@ function ResultsContent() {
                 </span>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3 sm:p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3 sm:p-4 items-stretch">
               {regularProducts.map((product, i) => {
                 const isCheapest = product.price === priceRange.min;
                 return (
                   <div
                     key={`${product.name}-${i}`}
-                    className={`animate-[fadeIn_0.3s_ease-out] rounded-xl overflow-hidden border-2 transition-all ${isCheapest ? 'bg-emerald-50 border-emerald-400 shadow-md' : 'border-transparent bg-white'}`}
+                    className={`animate-[fadeIn_0.3s_ease-out] rounded-xl overflow-hidden border-2 transition-all flex flex-col h-full ${isCheapest ? 'bg-emerald-50 border-emerald-400 shadow-md' : 'border-transparent bg-white'}`}
                     style={{ animationDelay: `${i * 50}ms`, animationFillMode: 'backwards' }}
                   >
-                    {isCheapest && <div className="px-3 py-1 bg-emerald-500 text-white text-[10px] font-bold text-center tracking-wide">ЛУЧШАЯ ЦЕНА</div>}
-                    <ProductCard {...product} />
+                    {isCheapest && <div className="px-3 py-1 bg-emerald-500 text-white text-[10px] font-bold text-center tracking-wide shrink-0">ЛУЧШАЯ ЦЕНА</div>}
+                    <ProductCard {...product} className="flex-1" />
                   </div>
                 );
               })}
