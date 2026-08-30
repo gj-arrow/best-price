@@ -35,11 +35,11 @@ class Shop7745Scraper(BrowserScraper):
         try:
             page = await browser.new_page()
             await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-            await page.wait_for_timeout(7000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            await page.wait_for_timeout(3000)
             html = await page.content()
             if len(html) < 5000 or "Verification" in html or "hg-security" in html:
-                await page.wait_for_timeout(4000)
+                await page.wait_for_timeout(2000)
                 html = await page.content()
             if len(html) < 5000 or "Verification" in html:
                 return []
@@ -47,7 +47,7 @@ class Shop7745Scraper(BrowserScraper):
             if products:
                 return products[:30]
             # retry waiting a bit more in case catalog lazy-loads
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(1500)
             html = await page.content()
             return self._parse_html_content(html)[:30]
         except Exception as e:

@@ -27,13 +27,13 @@ export default function HomePage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [includeKufar, setIncludeKufar] = useState(false);
+  const [includeKufar, setIncludeKufar] = useState(true);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
       setIsSearching(true);
-      const kufarParam = includeKufar ? '&include_kufar=true' : '';
+      const kufarParam = `&include_kufar=${includeKufar ? 'true' : 'false'}`;
       router.push(`/results?q=${encodeURIComponent(searchQuery.trim())}${kufarParam}`);
     }
   };
@@ -62,7 +62,7 @@ export default function HomePage() {
               Сравните цены перед покупкой
             </h1>
             <p className="text-slate-500 mt-2 text-[13px] sm:text-sm px-4 sm:px-0">
-              Поиск по {PLATFORMS.length} площадкам — находите лучшие предложения
+              Поиск по более 10+ площадкам — находите лучшие предложения
             </p>
           </div>
 
@@ -104,14 +104,14 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => setIncludeKufar(!includeKufar)}
-                title={includeKufar ? 'Kufar (б/у) включён — нажмите чтобы убрать' : 'Включить Kufar (б/у) в поиск'}
+                title={includeKufar ? '+ Куфар б\\у включён — нажми Найти' : '+ Куфар б\\у — применится по Найти'}
                 className={`self-start sm:self-auto px-3 py-2 sm:py-1.5 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap min-h-[36px] sm:min-h-0 ${
                   includeKufar
                     ? 'bg-amber-500 border-amber-500 text-white'
                     : 'bg-white border-slate-200 text-slate-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
                 }`}
               >
-                Kufar (б/у)
+                + Куфар б\у
               </button>
               {isSearching ? (
                 <div className="flex items-center gap-2 text-xs text-violet-600" role="status" aria-live="polite">

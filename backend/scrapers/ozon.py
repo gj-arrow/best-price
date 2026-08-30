@@ -1,4 +1,15 @@
-"""Ozon.by scraper implementation using undetected-chromedriver."""
+"""Ozon.by scraper implementation using undetected-chromedriver.
+
+Playwright НЕ работает — Variti детектит его chromium (и bundled headless-shell,
+и channel="chrome") и отдаёт challenge "Похоже, нет соединения" (инцидент
+fab_chlg_...). undetected-chromedriver проходит потому что патчит ChromeDriver
+(скрывает webdriver + пересобирает под текущий Chrome). Обязательно version_main
+должен совпадать с установленным Chrome (авто-детект).
+
+Важно: /search/?text=... легально редиректит на /category/... (например
+iphone → /category/smartfony-15502/apple-26303000/) — это НЕ блок, а нормальная
+выдача. _on_search_page принимает и /category/.
+"""
 
 import os
 import re
@@ -18,25 +29,48 @@ except ImportError:
     pass
 
 # Lazy imports for heavyweight deps
-_webdriver = None  # uc module reference
 _browser = None    # uc.Chrome instance
 _executor = ThreadPoolExecutor(max_workers=1)
 _LOCK = asyncio.Lock()  # ensure one search at a time (single browser)
 
 
+def _detect_chrome_version() -> int:
+    """Detect installed Chrome major version, fallback to 151."""
+    import subprocess, re
+    candidates = [
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+        ["google-chrome", "--version"],
+        ["chromium", "--version"],
+    ]
+    for cmd in candidates:
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=3)
+            m = re.search(r"(\d+)\.", out)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            continue
+    return 151
+
+
 def _get_browser():
     """Get or create the shared undetected-chromedriver browser instance."""
-    global _webdriver, _browser
+    global _browser
     if _browser is None:
         import undetected_chromedriver as uc
-        _webdriver = uc
         options = uc.ChromeOptions()
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--window-size=1280,800")
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
-        # version_main must match installed Chrome version
-        _browser = uc.Chrome(headless=True, version_main=149, options=options)
+        ver = _detect_chrome_version()
+        # version_main must match installed Chrome version — авто-детект чтобы не ломаться при апдейте
+        _browser = uc.Chrome(headless=True, version_main=ver, options=options)
+        try:
+            _browser.set_page_load_timeout(15)
+            _browser.set_script_timeout(12)
+        except Exception:
+            pass
     return _browser
 
 
@@ -114,16 +148,18 @@ def _parse_tiles(browser) -> list[ProductData]:
 
 
 def _on_search_page(browser) -> bool:
-    """Quick URL check: are we nominally on a /search/ page?
+    """Quick URL check: are we on search or category results?
 
     Variti sometimes redirects the search GET to the homepage outright.
+    Ozon also legitimately redirects /search/?text=iphone → /category/smartfony/.../apple-...
+    which is a valid listing page with the same [data-index] tiles. Both are accepted.
     A stronger junk check (_results_match_query) runs after parsing.
     """
     try:
         current = browser.current_url or ""
     except Exception:
         return False
-    return "/search/" in current
+    return "/search/" in current or "/category/" in current
 
 
 def _results_match_query(products: list[ProductData], query: str) -> bool:
@@ -163,11 +199,11 @@ def _search_sync(query: str) -> list[ProductData]:
       1. On a fresh browser, load the Ozon homepage first (human-like
          warmup) before searching.
       2. Navigate to the search URL, wait for tiles.
-      3. Reject the result if the URL was redirected away from /search/
-         OR if no parsed tile contains the query's strong model token
-         (recommendation junk lacks it).
+      3. Reject the result if the URL was redirected away from /search/ or
+         /category/ OR if no parsed tile contains the query's strong model
+         token (recommendation junk lacks it).
       4. On rejection, close + recreate the browser (fresh fingerprint)
-         and retry. Up to 3 attempts.
+         and retry. Up to 2 attempts.
     """
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
@@ -179,37 +215,37 @@ def _search_sync(query: str) -> list[ProductData]:
     url = f"https://www.ozon.by/search/?text={encoded}"
 
     products: list[ProductData] = []
-    for attempt in range(5):
+    for attempt in range(2):
         browser = _get_browser()
         try:
             # Human-like warmup: load homepage once per browser session.
             if not _warmed_up:
                 browser.get("https://www.ozon.by/")
-                time.sleep(2)
+                time.sleep(0.8)
                 _warmed_up = True
 
             browser.get(url)
 
-            # Wait for product tiles to appear
-            WebDriverWait(browser, 20).until(
+            # Wait for product tiles — category pages use same [data-index]
+            WebDriverWait(browser, 14).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "[data-index]"))
             )
 
             # Give JS a moment to render
-            time.sleep(2)
+            time.sleep(0.6)
 
             # Scroll to trigger lazy loading
             browser.execute_script("window.scrollBy(0, 800);")
-            time.sleep(1.5)
+            time.sleep(0.6)
 
             # Two-stage junk detection:
-            #   (a) URL redirected away from /search/ → homepage soft-block
+            #   (a) URL redirected away from /search/ or /category/ → homepage soft-block
             #   (b) tiles present but none match the query's model token →
-            #       recommendation carousels served under a /search/ URL
+            #       recommendation carousels served under a search URL
             if not _on_search_page(browser):
-                print(f"Ozon: redirected off /search/ "
+                print(f"Ozon: redirected off search/category "
                       f"(url={browser.current_url[:60]}), recreating browser "
-                      f"(attempt {attempt + 1}/5)")
+                      f"(attempt {attempt + 1}/2)")
                 _close_browser()
                 _warmed_up = False
                 continue
@@ -218,7 +254,7 @@ def _search_sync(query: str) -> list[ProductData]:
 
             if not _results_match_query(products, query):
                 print(f"Ozon: tiles are recommendation junk (no model token), "
-                      f"recreating browser (attempt {attempt + 1}/5)")
+                      f"recreating browser (attempt {attempt + 1}/2)")
                 _close_browser()
                 _warmed_up = False
                 continue
@@ -226,7 +262,7 @@ def _search_sync(query: str) -> list[ProductData]:
             return products
 
         except Exception as e:
-            print(f"Ozon search error (attempt {attempt + 1}/5): {e}")
+            print(f"Ozon search error (attempt {attempt + 1}/2): {e}")
             _close_browser()
             _warmed_up = False
             continue

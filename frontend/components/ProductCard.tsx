@@ -57,9 +57,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         <div className={styles.priceRow}>
           <div className={styles.priceWrapper}>
-            <span className={styles.price}>{currency}{formatPrice(price)}</span>
+            <span className={styles.price}>{currency === 'BYN' || currency === '₽' || currency === 'р.' ? `${formatPrice(price)} ${currency}` : `${currency}${formatPrice(price)}`}</span>
             {hasDiscount && (
-              <span className={styles.originalPrice}>{currency}{formatPrice(originalPrice!)}</span>
+              <span className={styles.originalPrice}>{currency === 'BYN' || currency === '₽' || currency === 'р.' ? `${formatPrice(originalPrice!)} ${currency}` : `${currency}${formatPrice(originalPrice!)}`}</span>
             )}
           </div>
           {hasDiscount && (

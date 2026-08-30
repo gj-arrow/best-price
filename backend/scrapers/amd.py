@@ -1,107 +1,84 @@
-"""AMD.by scraper via Playwright (anti-bot hg-security).
+"""AMD.by scraper — sphinx autocomplete endpoint (без браузера!).
 
-AMD.by is protected by a JS challenge that sets `hg-security` cookie via
-`navigator.webdriver` check and a heavy `calc` loop. Plain aiohttp gets
-401/403 or a 1.2k verification page. A real browser with webdriver hidden
-usually passes after ~2s and reloads.
+AMD.by main site is protected by hg-security JS challenge, and the regular
+search page (/search/?search=...) has a broken/full-text index that returns
+"Показано с 0 по 0 из 0" for EVERY query. The working search is the sphinx
+autocomplete endpoint:
 
-Search is at `https://www.amd.by/search/?query=<query>` (with slash) but
-also accepts `https://amd.by/search?query=` (without www). The page is
-SSR after challenge passes and contains `.search-prod-details` product
-blocks. If the challenge still blocks (headless detected), we return [].
+    https://www.amd.by/index.php?route=extension/module/sphinxautocomplete&search=<query>
+
+It's SSR HTML (no hg-security on it), works with plain aiohttp, and returns
+classic OpenCart-ish blocks:
+  div.row > div.search-prod-details > a.search-prod-name (name + URL)
+  div.row > div.search-prod-details-price > .price-tov > .new-price (e.g. "5 632.84 ƃ")
+
+Prices are in BYN (ƃ = Belarusian ruble).
 """
 
 import re
 from typing import Optional
 
-from .base import BrowserScraper, ProductData, _get_browser, _release_browser
+from .base import IScraper, ProductData
 
 
-class AmdScraper(BrowserScraper):
+class AmdScraper(IScraper):
     store_name = "AMD.by"
 
+    async def _get_session(self):
+        """sphinx autocomplete требует X-Requested-With: XMLHttpRequest — иначе redirect loop."""
+        if self._session is None or self._session.closed:
+            from .base import BROWSER_HEADERS, SSL_CONTEXT
+            import aiohttp
+            headers = dict(BROWSER_HEADERS)
+            headers["X-Requested-With"] = "XMLHttpRequest"
+            headers["Accept"] = "text/html,*/*"
+            self._session = aiohttp.ClientSession(
+                headers=headers,
+                connector=aiohttp.TCPConnector(ssl=SSL_CONTEXT),
+            )
+        return self._session
+
     async def search(self, query: str) -> list[ProductData]:
-        # Try both URL variants
-        urls = [
-            f"https://www.amd.by/search/?query={query.replace(' ', '+')}",
-            f"https://amd.by/search?query={query.replace(' ', '+')}",
-        ]
-        browser = await _get_browser()
-        page = None
-        for url in urls:
-            try:
-                page = await browser.new_page()
-                await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(5000)
-                html = await page.content()
-                # Check if still on verification (hg-security)
-                if "hg-security" in html or "Verification" in html or len(html) < 5000:
-                    # try waiting a bit more for auto-reload
-                    await page.wait_for_timeout(3000)
-                    html = await page.content()
-                if len(html) < 5000 or "Verification" in html:
-                    await page.close()
-                    page = None
-                    continue
-                products = self._parse_html_content(html)
-                await page.close()
-                page = None
-                if products:
-                    return products[:30]
-                # If no products but page loaded, try next URL
-            except Exception as e:
-                print(f"AMD search failed for {query} at {url}: {e}")
-                if page:
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
-                    page = None
+        import re
+
+        def _strip_storage(q: str) -> str:
+            return re.sub(r"\s*\d+\s*(gb|гб|гбайт|tb|тб)\b", "", q, flags=re.I).strip()
+
+        def _queries_to_try(q: str) -> list[str]:
+            qs = [q]
+            no_apple = re.sub(r"\bapple\b", "", q, flags=re.I).strip()
+            no_apple = re.sub(r"\s{2,}", " ", no_apple)
+            if no_apple and no_apple not in qs and len(no_apple) >= 2:
+                qs.append(no_apple)
+            no_storage = _strip_storage(q)
+            if no_storage and no_storage not in qs and len(no_storage) >= 2:
+                qs.append(no_storage)
+            both = _strip_storage(no_apple) if no_apple else _strip_storage(q)
+            both = re.sub(r"\s{2,}", " ", both).strip()
+            if both and both not in qs and len(both) >= 2:
+                qs.append(both)
+            return qs
+
+        # sphinx autocomplete ищет по всем словам — оригинальный запрос обычно сразу работает
+        queries = _queries_to_try(query)[:2]
+        for q_try in queries:
+            url = (
+                "https://www.amd.by/index.php?route=extension/module/sphinxautocomplete"
+                f"&search={q_try.replace(' ', '+')}"
+            )
+            html = await self._fetch(url, timeout=10)
+            if not html:
                 continue
-        if page:
-            try:
-                await page.close()
-            except Exception:
-                pass
-        await _release_browser()
+            products = self._parse_html_content(html)
+            if products:
+                return products[:30]
         return []
 
     def _parse_html_content(self, html: str) -> list[ProductData]:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "html.parser")
         products: list[ProductData] = []
-        # AMD search results: .search-prod-details or .product-thumb?
-        # Observed CSS: .sphinxsearch .products .search-prod-details
-        items = soup.select(".search-prod-details, .product-thumb, .product-layout")
-        if not items:
-            # fallback: any link to product
-            items = soup.select('a[href*="/product/"]')
-            # need to group by product block
-            # Instead parse all product links directly
-            seen = set()
-            for a in soup.select('a[href*="/product/"]')[:30]:
-                href = a.get("href", "")
-                name = a.get_text(strip=True) or a.get("title", "")
-                if not name or len(name) < 5:
-                    # try parent title
-                    parent = a.find_parent("div")
-                    if parent:
-                        name = parent.get_text(strip=True)[:80]
-                if href.startswith("/"):
-                    href = "https://www.amd.by" + href
-                if href in seen:
-                    continue
-                seen.add(href)
-                # find price nearby
-                price = self._extract_price_for_link(a)
-                if price is None or price <= 0:
-                    continue
-                if not name or len(name) < 5:
-                    name = href.split("/")[-1].replace("-", " ")
-                products.append(ProductData(name=name.strip(), price=price, store=self.store_name, url=href))
-            return products
-
+        items = soup.select(".search-prod-details")
         for item in items[:30]:
             prod = self._parse_item(item)
             if prod:
@@ -109,53 +86,46 @@ class AmdScraper(BrowserScraper):
         return products
 
     def _parse_item(self, item) -> Optional[ProductData]:
-        # name from a
-        link = item.select_one("a[href]")
+        link = item.select_one(".search-prod-name")
         if not link:
             return None
-        name = link.get_text(strip=True) or link.get("title", "")
+        name = link.get_text(strip=True)
         if not name or len(name) < 5:
-            # try heading
-            h = item.select_one("h4, .name, .product-name")
-            if h:
-                name = h.get_text(strip=True)
-        if not name:
             return None
         href = link.get("href", "")
         if href.startswith("/"):
             href = "https://www.amd.by" + href
-        price = self._extract_price_for_link(item)
+
+        price = self._extract_price(item)
         if price is None or price <= 0:
             return None
         return ProductData(name=name.strip(), price=price, store=self.store_name, url=href)
 
-    def _extract_price_for_link(self, elem) -> Optional[float]:
-        # look for price in same block
-        # AMD price is in .price, .price-tov, [class*="price"]
-        price_el = elem.select_one(".price, .price-tov, [class*='price']")
-        if not price_el:
-            # climb up
-            parent = elem.parent
-            for _ in range(3):
-                if not parent:
-                    break
-                price_el = parent.select_one(".price, .price-tov, [class*='price']")
-                if price_el:
-                    break
-                parent = parent.parent
+    def _extract_price(self, item) -> Optional[float]:
+        """Price is in the parent .row container: .search-prod-details-price .new-price.
+
+        Text like "5 632.84 ƃ" (BYN). Take the first number.
+        """
+        # climb to .row (the block containing both details and price)
+        row = item
+        for _ in range(4):
+            row = row.parent
+            if row is None:
+                return None
+            if row.get("class") and "row" in row.get("class"):
+                break
+        price_el = row.select_one(".new-price") if row is not None else None
         if not price_el:
             return None
         text = price_el.get_text(strip=True)
-        # text like "1 234,00 р." or "799.00"
-        text = text.replace(" ", "").replace("\u00a0", "").replace(",", ".")
-        m = re.search(r"(\d+(?:\.\d+)?)", text)
+        text = text.replace("\u00a0", " ").replace(" ", "")
+        m = re.search(r"(\d+(?:[.,]\d+)?)", text)
         if not m:
             return None
         try:
-            return float(m.group(1))
+            return float(m.group(1).replace(",", "."))
         except ValueError:
             return None
 
     async def close(self) -> None:
-        # BrowserScraper close is handled via _release_browser, but we called it manually
-        pass
+        await super().close()

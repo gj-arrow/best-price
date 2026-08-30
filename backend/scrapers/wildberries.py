@@ -18,8 +18,12 @@ try:
 except ImportError:
     HAS_CURL_CFFI = False
 
-# Approximate conversion rate: 1 BYN ≈ 25.8 RUB (updated periodically)
-RUB_TO_BYN = 0.0388
+try:
+    from utils.currency import get_rub_to_byn_sync
+except ModuleNotFoundError:
+    from backend.utils.currency import get_rub_to_byn_sync  # type: ignore
+
+FALLBACK_RUB_TO_BYN = 0.035617
 
 
 class WildberriesScraper(IScraper):
@@ -42,62 +46,81 @@ class WildberriesScraper(IScraper):
         if not HAS_CURL_CFFI:
             return []
 
-        encoded = query.replace(" ", "%20")
-        url = (
-            "https://search.wb.ru/exactmatch/ru/common/v9/search"
-            f"?ab_testing=false&appType=1&curr=rub"
-            f"&dest=-1257786"
-            f"&query={encoded}"
-            f"&resultset=catalog&sort=popular&spp=0&suppressSpellcheck=false"
-        )
+        # Wildberries exactmatch is flaky with canonical "apple iphone 17 pro max 256gb"
+        # (apple + storage). Если первый запрос вернул 0 — пробуем stripped варианты.
+        # Порядок: оригинал → без apple → без storage → без обоих (iphone 17 pro max)
+        import re
 
-        # WB rate-limits (429) under burst traffic. Retry up to 3 times with
-        # a short backoff so a single user search survives a transient block.
-        data = None
-        for attempt in range(3):
-            try:
-                resp = curl_requests.get(url, impersonate="chrome124", timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
+        def _strip_storage(q: str) -> str:
+            return re.sub(r"\s*\d+\s*(gb|гб|гбайт|tb|тб)\b", "", q, flags=re.I).strip()
+
+        def _queries_to_try(q: str) -> list[str]:
+            qs = [q]
+            no_apple = re.sub(r"\bapple\b", "", q, flags=re.I).strip()
+            no_apple = re.sub(r"\s{2,}", " ", no_apple)
+            if no_apple and no_apple not in qs:
+                qs.append(no_apple)
+            no_storage = _strip_storage(q)
+            if no_storage and no_storage not in qs:
+                qs.append(no_storage)
+            both = _strip_storage(no_apple) if no_apple else _strip_storage(q)
+            both = re.sub(r"\s{2,}", " ", both).strip()
+            if both and both not in qs:
+                qs.append(both)
+            # гарантируем минимум "iphone 17 pro max"
+            return qs
+
+        # небольшой stagger для burst 11 scrapers
+        import random
+        time.sleep(random.uniform(0.1, 0.6))
+        # пробуем до 2 вариантов: оригинал и stripped без apple/storage (fallback быстрый)
+        queries = _queries_to_try(query)[:2]
+        for q_try in queries:
+            encoded = q_try.replace(" ", "%20")
+            url = (
+                "https://search.wb.ru/exactmatch/ru/common/v9/search"
+                f"?ab_testing=false&appType=1&curr=rub"
+                f"&dest=-1257786"
+                f"&query={encoded}"
+                f"&resultset=catalog&sort=popular&spp=0&suppressSpellcheck=false"
+            )
+            data = None
+            for attempt in range(2):
+                try:
+                    resp = curl_requests.get(url, impersonate="chrome124", timeout=8)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        break
+                    if resp.status_code in (429, 500, 502, 503) and attempt < 1:
+                        time.sleep(1.0)
+                        continue
                     break
-                if resp.status_code == 429 and attempt < 2:
-                    time.sleep(2 * (attempt + 1))  # 2s, 4s
-                    continue
-                return []
-            except Exception:
-                return []
-
-        if data is None:
-            return []
-
-        raw_products = data.get("products", [])
-
-        results: list[ProductData] = []
-        for p in raw_products[:30]:
-            name = p.get("name", "").strip()
-            if not name:
+                except Exception:
+                    if attempt < 1:
+                        time.sleep(0.7)
+                        continue
+                    break
+            if data is None:
                 continue
-
-            # Price is in sizes[0]["price"]["product"] (kopeks)
-            price = 0.0
-            sizes = p.get("sizes", [])
-            if sizes and "price" in sizes[0]:
-                price_kopeks = sizes[0]["price"].get("product") or sizes[0]["price"].get("basic", 0)
-                if price_kopeks:
-                    # Convert from RUB kopeks → BYN
-                    price = (price_kopeks / 100.0) * RUB_TO_BYN
-
-            nm_id = p.get("id")
-            url = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx" if nm_id else ""
-
-            results.append(ProductData(
-                name=name,
-                price=round(price, 2),
-                store=self.store_name,
-                url=url,
-            ))
-
-        return results
+            raw_products = data.get("products", [])
+            if raw_products:
+                results: list[ProductData] = []
+                for p in raw_products[:30]:
+                    name = p.get("name", "").strip()
+                    if not name:
+                        continue
+                    price = 0.0
+                    sizes = p.get("sizes", [])
+                    if sizes and "price" in sizes[0]:
+                        price_kopeks = sizes[0]["price"].get("product") or sizes[0]["price"].get("basic", 0)
+                        if price_kopeks:
+                            price = (price_kopeks / 100.0) * get_rub_to_byn_sync()
+                    nm_id = p.get("id")
+                    url_p = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx" if nm_id else ""
+                    results.append(ProductData(name=name, price=round(price, 2), store=self.store_name, url=url_p))
+                if results:
+                    return results
+        return []
 
     async def close(self) -> None:
         """Clean up resources."""

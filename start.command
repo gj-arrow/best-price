@@ -21,7 +21,9 @@ cleanup() {
         done < "$PID_FILE"
         rm -f "$PID_FILE"
     fi
-    wait
+    # также убить остатки по портам на случай ручного запуска
+    lsof -ti:8000,3000 2>/dev/null | xargs kill 2>/dev/null || true
+    wait 2>/dev/null || true
     echo -e "${GREEN}Done.${NC}"
     exit 0
 }
@@ -30,15 +32,15 @@ trap cleanup SIGINT SIGTERM
 
 # --- PostgreSQL ---
 echo -e "${YELLOW}[1/3] Checking PostgreSQL...${NC}"
-if brew services list | grep -q "postgresql@15.*started"; then
+if brew services list 2>/dev/null | grep -q "postgresql@15.*started"; then
     echo -e "${GREEN}  PostgreSQL already running.${NC}"
-elif brew services list | grep -q "postgresql@15.*none"; then
+elif brew services list 2>/dev/null | grep -q "postgresql@15.*none"; then
     echo -e "${YELLOW}  Starting PostgreSQL...${NC}"
     brew services run postgresql@15 &
     sleep 2
 else
     echo -e "${YELLOW}  Starting PostgreSQL...${NC}"
-    brew services start postgresql@15
+    brew services start postgresql@15 2>/dev/null || brew services run postgresql@15 &
     sleep 2
 fi
 
@@ -50,6 +52,9 @@ fi
 
 # --- Backend ---
 echo -e "${YELLOW}[2/3] Starting backend (uvicorn)...${NC}"
+# убить старый uvicorn на 8000
+lsof -ti:8000 2>/dev/null | xargs kill 2>/dev/null || true
+sleep 1
 cd "$BACKEND_DIR"
 SSL_CERT_FILE=$(python3 -m certifi) uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
@@ -57,12 +62,12 @@ echo "$BACKEND_PID" > "$PID_FILE"
 
 # Wait for backend
 for i in $(seq 1 30); do
-    if curl -s "http://localhost:8000/health" > /dev/null 2>&1; then
+    if curl -s "http://localhost:8000/health" > /dev/null 2>&1 || curl -s "http://localhost:8000/api/search?q=test" > /dev/null 2>&1; then
         echo -e "${GREEN}  Backend ready on http://localhost:8000${NC}"
         break
     fi
     if [ "$i" -eq 30 ]; then
-        echo -e "${RED}  Backend failed to start${NC}"
+        echo -e "${RED}  Backend failed to start — check backend logs${NC}"
         cleanup
     fi
     sleep 1
@@ -70,10 +75,46 @@ done
 
 # --- Frontend ---
 echo -e "${YELLOW}[3/3] Starting frontend (Next.js)...${NC}"
+# убить старый next на 3000
+lsof -ti:3000 2>/dev/null | xargs kill 2>/dev/null || true
+sleep 1
 cd "$FRONTEND_DIR"
+
+# Чистка битого кэша Next.js (частая причина FOUC/стили не применились + Cannot find module './*.js')
+if [ -d ".next" ]; then
+    echo -e "${YELLOW}  Cleaning .next cache (fixes broken styles/chunks)...${NC}"
+    rm -rf .next
+fi
+
+# Установка зависимостей если node_modules отсутствует/битый
+if [ ! -d "node_modules" ] || [ ! -f "node_modules/next/dist/bin/next" ]; then
+    echo -e "${YELLOW}  Installing frontend deps (npm ci)...${NC}"
+    npm ci
+fi
+
+# Проверка tailwind/postcss (если сломаны — переустановить)
+if [ ! -f "node_modules/tailwindcss/lib/index.js" ]; then
+    echo -e "${YELLOW}  Reinstalling tailwindcss...${NC}"
+    npm install -D tailwindcss@3.4.6 postcss@8.4.39 autoprefixer@10.4.19
+fi
+
 npm run dev &
 FRONTEND_PID=$!
 echo "$FRONTEND_PID" >> "$PID_FILE"
+
+# Wait for frontend (проверяем что отдает html с layout.css, а не 500)
+for i in $(seq 1 40); do
+    if curl -s "http://localhost:3000/" | grep -q "layout.css\|Best Price" 2>/dev/null; then
+        echo -e "${GREEN}  Frontend ready on http://localhost:3000${NC}"
+        break
+    fi
+    if [ "$i" -eq 40 ]; then
+        echo -e "${RED}  Frontend failed to start — check /tmp/next.log${NC}"
+        echo -e "${YELLOW}  Попробуй: rm -rf frontend/.next && npm run dev --prefix frontend${NC}"
+        break
+    fi
+    sleep 1
+done
 
 echo ""
 echo -e "${GREEN}====================================${NC}"
@@ -86,6 +127,6 @@ echo -e "${YELLOW}  Press Ctrl+C to stop all services${NC}"
 echo ""
 
 # Open browser
-open http://localhost:3000
+open http://localhost:3000 2>/dev/null || true
 
 wait

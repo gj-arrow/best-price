@@ -30,6 +30,13 @@ class QueryMeta(BaseModel):
     category: Optional[str] = None
 
 
+class DebugStore(BaseModel):
+    store: str
+    status: str  # ok | empty | error
+    found: int = 0
+    error: Optional[str] = None
+
+
 class SearchResult(BaseModel):
     query: str
     products: list[ProductResponse] = []
@@ -37,6 +44,7 @@ class SearchResult(BaseModel):
     max_price: float = 0
     total_results: int = 0
     query_meta: Optional[QueryMeta] = None
+    debug: Optional[list[DebugStore]] = None
 
     class Config:
         from_attributes = True

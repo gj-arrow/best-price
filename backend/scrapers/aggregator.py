@@ -51,6 +51,7 @@ class ScraperAggregator:
         self._kufar = KufarScraper()
         self._google_ai = GoogleAiScraper()
         self._include_kufar = include_kufar
+        self._last_debug: list[dict] = []
 
     @staticmethod
     def _extract_query_words(query: str) -> list[str]:
@@ -91,19 +92,39 @@ class ScraperAggregator:
             return True
 
         name_lower = product.name.lower()
+        # нормализуем для storage типа "256 гб" vs "256gb" (гб/гб cyrillic → gb)
+        name_lower_norm = name_lower.replace("гб", "gb").replace("гбайт", "gb")
+        name_nospace = re.sub(r"[^a-zа-яё0-9]", "", name_lower_norm)
 
-        strong = [w for w in query_words if re.search(r"\d", w) and re.search(r"[a-zа-яё]", w)]
+        def _contains_word(haystack: str, needle: str) -> bool:
+            # граница слова: через \b, чтобы "15" не матчило "150", "max" не матчило "maxi"
+            return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+
+        # бренд-специфика: если ищут iphone — в товаре должен быть iphone, иначе Xiaomi с pro max пролезет
+        if "iphone" in query_words and not _contains_word(name_lower, "iphone"):
+            return False
+
+        # storage типа "256gb"/"256 гб" — не модель, не требуем строго, иначе 5element отдаёт Xiaomi с 256gb
+        def _is_storage_token(t: str) -> bool:
+            return bool(re.match(r"^\d+\s*(gb|гб|гбайт|tb|тб)$", t.lower().replace(" ", "")))
+
+        strong = [w for w in query_words if re.search(r"\d", w) and re.search(r"[a-zа-яё]", w) and not _is_storage_token(w)]
         weak = [w for w in query_words if re.search(r"\d", w) and not re.search(r"[a-zа-яё]", w)]
         words = [w for w in query_words if not re.search(r"\d", w)]
 
         if strong:
-            if not all(s in name_lower for s in strong):
-                return False
-            return any(w in name_lower for w in words) if words else True
+            for s in strong:
+                s_norm = s.lower().replace("гб", "gb").replace("гбайт", "gb")
+                s_nospace = re.sub(r"[^a-zа-яё0-9]", "", s_norm)
+                has = _contains_word(name_lower, s.lower()) or _contains_word(name_lower_norm, s_norm) or s_nospace in name_nospace
+                # storage: "256gb" должен матчить "256 гб" / "256 gb" — уже покрыто nospace/norm
+                if not has:
+                    return False
+            return any(_contains_word(name_lower, w) or _contains_word(name_lower_norm, w) for w in words) if words else True
 
-        if not all(w in name_lower for w in weak):
+        if weak and not all(_contains_word(name_lower, w) for w in weak):
             return False
-        return any(w in name_lower for w in words) if words else True
+        return any(_contains_word(name_lower, w) for w in words) if words else True
 
     # Russian words that mark a listing as an ACCESSORY or SPARE PART to the
     # query's device, not the device itself. Checked against the first few
@@ -142,8 +163,12 @@ class ScraperAggregator:
             Note 12" is caught via the "oem"/"экран" sub-tokens.
         """
         name = product.name.strip()
-        first_word = name.lower().split(maxsplit=1)[0].strip(".,;:()\"'«»") if name else ""
-        if first_word in ("для", "for"):
+        lowers = name.lower()
+        # если в первых 4 токенах есть "для"/"for" — это аксессуар "X для Y"
+        first_tokens = [t.strip(".,;:()\"'«»").lower() for t in name.split()[:4]]
+        if "для" in first_tokens or "for" in first_tokens:
+            return True
+        if lowers.startswith("для ") or lowers.startswith("for "):
             return True
 
         tokens = name.split()[:3]
@@ -189,6 +214,27 @@ class ScraperAggregator:
         # Execute all searches concurrently with graceful degradation
         results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
+        # Build per-store debug: ok / empty / error with counts
+        self._last_debug = []
+        for scraper, result in zip(scrapers_to_run, results):
+            store = getattr(scraper, "store_name", scraper.__class__.__name__)
+            if isinstance(result, Exception):
+                self._last_debug.append({"store": store, "status": "error", "found": 0, "error": str(result)[:300]})
+                continue
+            if not isinstance(result, list):
+                self._last_debug.append({"store": store, "status": "empty", "found": 0})
+                continue
+            # count raw and relevant
+            relevant = [p for p in result if p.price > 0 and self._is_relevant(p, query_words)]
+            if not result:
+                self._last_debug.append({"store": store, "status": "empty", "found": 0})
+            elif not relevant:
+                # searched ok but nothing relevant (товара нет)
+                self._last_debug.append({"store": store, "status": "empty", "found": 0})
+            else:
+                # есть релевантные, но после dedup может остаться 0 аксессуаров? считаем ok
+                self._last_debug.append({"store": store, "status": "ok", "found": len(relevant)})
+
         # Flatten results, filtering out exceptions, None values, zero prices,
         # and irrelevant products (accessories, wrong models)
         all_products: list[ProductData] = []
@@ -205,16 +251,26 @@ class ScraperAggregator:
         # the user searched for). Only fall back to accessories if a store
         # lists nothing else. Sort key: (is_accessory, price) → non-
         # accessories sort first, then by price within each tier.
+        # Kufar is a marketplace — keep multiple listings (up to 10), not 1 per store.
         all_products.sort(key=lambda p: (self._is_accessory(p), p.price))
         seen_stores: set[str] = set()
         deduped: list[ProductData] = []
+        kufar_keep = 10
+        kufar_added = 0
         for p in all_products:
+            is_kufar = p.store == self._kufar.store_name
+            if is_kufar:
+                if kufar_added < kufar_keep:
+                    deduped.append(p)
+                    kufar_added += 1
+                continue
             if p.store not in seen_stores:
                 seen_stores.add(p.store)
                 deduped.append(p)
 
         # Present results to the user ordered by price (cheapest first),
         # regardless of the accessory tier used for dedup selection.
+        # Keep Kufar listings sorted by price among themselves
         deduped.sort(key=lambda p: p.price)
         return deduped
 

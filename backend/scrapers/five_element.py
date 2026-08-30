@@ -1,26 +1,93 @@
-"""5element.by scraper via Playwright (Diginetica suggestions)."""
+"""5element.by scraper via Diginetica autocomplete API (fallback Playwright)."""
 
 import re
 import json
+import os
 from typing import Optional
+from urllib.parse import quote_plus
+
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
+
+import aiohttp
 
 from .base import BrowserScraper, ProductData, _get_browser, _release_browser
 
 
 class FiveElementScraper(BrowserScraper):
-    """Scraper for 5element.by (JS-heavy, Diginetica).
+    """Scraper for 5element.by — Diginetica API first, Playwright fallback.
 
-    Search is JS-driven: typing in `input[placeholder*="Поиск товара"]`
-    loads suggestions via Diginetica with embedded JSON containing
-    product `name` and `price`. Full catalog search via GET is not SSR
-    (`/catalog?search=` returns generic catalog without filtering).
-    So we use a real browser to trigger the suggestion and parse the
-    resulting HTML for product JSON.
+    Ранее поиск шёл через Playwright ввод в `input[placeholder*="Поиск товара"]`
+    и парсинг `name/code/price` из HTML. Но после ввода `iPhone 17 Pro Max`
+    страница отдавала только хиты с `17` (Xiaomi Redmi 17) а iPhone не попадал
+    — Diginetica suggestions грузятся XHR, а HTML содержит прелоад homepage.
+    Прямой API `autocomplete.diginetica.net` отдаёт релевантные iPhone сразу
+    (проверено для `iPhone 17 Pro Max 256` и `айфон 17 про макс 256`).
+    Поэтому первично бьём в API, fallback — старый Playwright путь.
     """
 
     store_name = "5element.by"
+    _DIGINETICA_URL = "https://autocomplete.diginetica.net/autocomplete"
+    _API_KEY = "08IE0509XQ"
 
     async def search(self, query: str) -> list[ProductData]:
+        # 1) быстрый путь — Diginetica API (a la Wildberries)
+        try:
+            api_products = await self._search_via_api(query)
+            if api_products:
+                return api_products[:30]
+        except Exception as e:
+            print(f"5element api search failed for {query}: {e}")
+        # 2) fallback — старый Playwright (на случай смены apiKey)
+        return await self._search_via_browser(query)
+
+    async def _search_via_api(self, query: str) -> list[ProductData]:
+        params = {
+            "st": query,
+            "apiKey": self._API_KEY,
+            "strategy": "advanced_xname,zero_queries",
+            "productsSize": "20",
+            "regionId": "global",
+            "forIs": "true",
+            "showUnavailable": "true",
+            "withContent": "false",
+            "withSku": "false",
+        }
+        # quote_plus для корректного пробела
+        qs = "&".join(f"{k}={quote_plus(str(v))}" for k, v in params.items())
+        url = f"{self._DIGINETICA_URL}?{qs}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://5element.by/",
+        }
+        timeout = aiohttp.ClientTimeout(total=12)
+        async with aiohttp.ClientSession(timeout=timeout) as sess:
+            async with sess.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+        products: list[ProductData] = []
+        for prod in (data.get("products") or [])[:30]:
+            name = (prod.get("name") or "").strip()
+            # API отдаёт "APPLE Смартфон Apple iPhone 17 Pro Max 256GB ..." — чистим двойной бренд
+            price_raw = prod.get("price") or prod.get("oldPrice") or 0
+            try:
+                price = float(str(price_raw).replace(",", "."))
+            except ValueError:
+                continue
+            link = prod.get("link_url") or ""
+            if link.startswith("/"):
+                link = "https://5element.by" + link
+            if not name or price <= 0 or not link:
+                continue
+            products.append(ProductData(name=name, price=price, store=self.store_name, url=link))
+        return products
+
+    async def _search_via_browser(self, query: str) -> list[ProductData]:
         browser = await _get_browser()
         page = None
         try:
@@ -37,7 +104,7 @@ class FiveElementScraper(BrowserScraper):
             if await inp.count() == 0:
                 return []
             await inp.first.click()
-            await inp.first.fill(query)
+            await inp.first.press_sequentially(query, delay=80)
             await page.wait_for_timeout(4000)
 
             html = await page.content()

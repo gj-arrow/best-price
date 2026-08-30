@@ -54,11 +54,13 @@ Per store, the cheapest RELEVANT match isn't always the device — a case/charge
 | **360shop.by** | aiohttp + BeautifulSoup (Bitrix) | ✅ | `div.catalog_item.main_item_wrapper` |
 | **1k.by** | aiohttp + BeautifulSoup (SSR) | ✅ | Price aggregator (like Onliner). URL: `https://1k.by/products/search?s_keywords=...` (NOT search?q=). Selectors: `a.prod__link` = name + URL (absolute); `div.prod__price` = range `"239,00 – 379,00б.р.Сравнить все цены"` — take FIRST number (min offer), BYN (`б.р.` = белорусских рублей). `_find_price` walks up from the name link to the card ancestor holding the price div. |
 | **Shop.by** | aiohttp + BeautifulSoup (SSR) | ✅ | Price aggregator (like Onliner/1k.by). Search endpoint is `https://shop.by/find/?findtext=...` (GET) — discovered from the homepage `<form action="/find/" method="get">` with `<input name="findtext">`. **NOT `/search/?q=`** — that endpoint doesn't exist on Shop.by and redirects to the homepage (earlier "JS SPA, unsolvable" conclusion came from probing the wrong URL). Page is fully server-side rendered. Selectors: `div.ModelList__ModelBlockItem` = card; `a.ModelList__LinkModel` = name + relative URL (prepend `https://shop.by`; each card has 2 elements with this class — a `<span>` image wrapper and the real `<a>`, select the anchor); `span.PriceBlock__PriceValue` = min price `"1 499,00 p."` (space = thousands, comma = decimal, BYN). |
+| **AMD.by** | aiohttp + BeautifulSoup (SSR, sphinx autocomplete) | ✅ | **NOT Playwright/hg-security anymore.** Main site is protected by hg-security JS challenge and the regular search page `/search/?search=` returns "Показано с 0 по 0 из 0" for EVERY query (broken index). The working search is the sphinx autocomplete endpoint `https://www.amd.by/index.php?route=extension/module/sphinxautocomplete&search=<query>` — SSR HTML, no hg-security, works with plain aiohttp. **REQUIRES header `X-Requested-With: XMLHttpRequest`** (without it → redirect loop / TooManyRedirects). Blocks: `div.row > div.search-prod-details > a.search-prod-name` = name + URL (slug style, NOT `/product/`); price in the row's sibling `div.search-prod-details-price .price-tov .new-price` = `"5 632.84 ƃ"` (BYN). |
 
 ### Browser Singletons
 
 - **Playwright:** Module-level globals in `base.py` (`_browser`, `_browser_playwright`), refcounted via `_get_browser()`/`_release_browser()`. Used by `BrowserScraper` base class.
 - **undetected-chromedriver:** Module-level `_browser` in `ozon.py`. Created once, reused across searches. Runs in `ThreadPoolExecutor` background thread.
+- **Ozon anti-bot (important):** Playwright does NOT work for Ozon — Variti detects its chromium (both bundled `headless-shell` and `channel="chrome"`) and serves challenge "Похоже, нет соединения" (incident `fab_chlg_...`). Only `undetected-chromedriver` passes because it patches ChromeDriver. `version_main` must match installed Chrome. `/search/?text=...` legitimately redirects to `/category/smartfony-.../apple-.../` — this is a VALID listing (same `[data-index]` tiles), `_on_search_page` accepts `/category/`. Flaky ~4/5 (Variti), the other 1/5 returns `empty` fast (prices not rendered / junk tiles rejected) — no more 30s+ hangs.
 
 ## Backend Files
 
@@ -96,6 +98,7 @@ Per store, the cheapest RELEVANT match isn't always the device — a case/charge
 
 - **Shop.by**: works via `https://shop.by/find/?findtext=...` (SSR). Earlier "JS SPA, unsolvable" was wrong — came from probing `/search/?q=` (non-existent endpoint → homepage redirect). Real endpoint discovered from homepage search form.
 - **Ozon headless Chrome**: `version_main` must match `Google Chrome --version`. Breakage expected on Chrome update. `undetected-chromedriver` patches ChromeDriver — may need reinstall.
-- **RUB→BYN rate**: Hardcoded at 0.0388 in `wildberries.py`. Stale rate will misprice WB products.
+- **RUB→BYN rate**: NO LONGER hardcoded 0.0388 — now dynamic NBRB via `backend/utils/currency.py` (`get_rub_to_byn()` async / `get_rub_to_byn_sync()` thread-pool, 6h cache, fallback 0.035617). Stale fallback would misprice WB/Google AI products.
 - **Ozon tile selector**: `[data-index]` matches product tiles. Each tile has 2-3 identical links — code picks longest text to skip badge links.
+- **AMD search**: `/search/?query=` (old code) returns "Нет товаров"; `/search/?search=` returns "Показано с 0 по 0 из 0" (broken index). Only sphinx autocomplete works — see scrapers table.
 - **Backend restart**: Must kill old uvicorn process before starting new one (port conflict).

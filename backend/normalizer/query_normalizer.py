@@ -50,9 +50,18 @@ class QueryNormalizer:
             cached = await get_cached(self.db, original)
             if cached:
                 return NormalizeResult(original, cached.canonical, cached.confidence, cached.category or _infer_category(cached.canonical), cached.canonical != original)
-        # translit
+        # translit — лёгкая предобработка перед AI (опц)
         latin = transliterate(original)
-        # fuzzy
+        # 1) Free AI (Pollinations) — основной путь, без словаря, generic для любого товара
+        llm = await llm_normalize(latin)
+        if llm:
+            canonical, conf, cat = llm
+            cat = cat or _infer_category(canonical)
+            if conf >= 0.65:
+                if self.db is not None:
+                    await set_cached(self.db, original, canonical, conf, cat)
+                return NormalizeResult(original, canonical, conf, cat, canonical.lower() != original.lower())
+        # 2) Fuzzy словарь — оффлайн fallback если AI недоступен (host без интернета)
         m = fuzzy_match(latin)
         if m:
             canonical, conf = m
@@ -60,16 +69,7 @@ class QueryNormalizer:
             if self.db is not None:
                 await set_cached(self.db, original, canonical, conf, cat)
             return NormalizeResult(original, canonical, conf, cat, canonical != original)
-        # LLM fallback
-        llm = await llm_normalize(latin)
-        if llm:
-            canonical, conf, cat = llm
-            cat = cat or _infer_category(canonical)
-            if conf >= 0.7:
-                if self.db is not None:
-                    await set_cached(self.db, original, canonical, conf, cat)
-                return NormalizeResult(original, canonical, conf, cat, True)
-        # fallback — транслит как canonical
+        # 3) fallback — транслит как canonical
         if latin != original:
             return NormalizeResult(original, latin, 0.8, _infer_category(latin), True)
         return NormalizeResult(original, original, 1.0, _infer_category(original), False)
