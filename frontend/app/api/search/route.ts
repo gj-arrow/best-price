@@ -14,8 +14,12 @@ export async function GET(request: NextRequest) {
     }
 
     const includeKufar = searchParams.get('include_kufar');
-    const backendUrl = `${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}${includeKufar === 'true' ? '&include_kufar=true' : ''}`;
-    const response = await fetch(backendUrl);
+    const noCorrect = searchParams.get('no_correct');
+    const url = new URL(`${BACKEND_URL}/api/search`);
+    url.searchParams.set('q', query);
+    if (includeKufar === 'true') url.searchParams.set('include_kufar', 'true');
+    if (noCorrect) url.searchParams.set('no_correct', noCorrect);
+    const response = await fetch(url.toString());
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ detail: 'Backend request failed' }));

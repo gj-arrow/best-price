@@ -20,6 +20,7 @@ function ResultsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const query = searchParams.get('q') || '';
+  const noCorrect = searchParams.get('no_correct') === '1';
 
   const [searchQuery, setSearchQuery] = useState(query);
   const [isLoading, setIsLoading] = useState(false);
@@ -28,6 +29,7 @@ function ResultsContent() {
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'relevance' | 'price-asc' | 'price-desc'>('relevance');
   const [includeKufar, setIncludeKufar] = useState(() => searchParams.get('include_kufar') === 'true');
+  const [queryMeta, setQueryMeta] = useState<null | { original: string; canonical: string; corrected: boolean; confidence: number; category: string }>(null);
 
   useEffect(() => {
     if (!query) {
@@ -40,12 +42,14 @@ function ResultsContent() {
     setError(null);
 
     const kufarParam = includeKufar ? '&include_kufar=true' : '';
-    fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}${kufarParam}`)
+    const noCorrectParam = noCorrect ? '&no_correct=1' : '';
+    fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}${kufarParam}${noCorrectParam}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Ошибка ${res.status}`);
         return res.json();
       })
       .then((data) => {
+        setQueryMeta(data.query_meta || null);
         setTotalResults(data.total_results || 0);
         const mapped: ProductCardProps[] = (data.products || []).map((p: ApiProduct) => ({
           name: p.name,
@@ -63,7 +67,7 @@ function ResultsContent() {
         setTotalResults(0);
       })
       .finally(() => setIsLoading(false));
-  }, [query, includeKufar]);
+  }, [query, includeKufar, noCorrect]);
 
   useEffect(() => {
     if (sortBy === 'relevance') return; // API returns by relevance already
@@ -161,6 +165,23 @@ function ResultsContent() {
             <h1 className="text-[17px] sm:text-lg font-bold text-slate-800 truncate">
               {query ? `«${query}»` : 'Все товары'}
             </h1>
+            {queryMeta?.corrected && (
+              <div aria-live="polite" className="mt-1 text-xs flex flex-wrap items-center gap-1.5">
+                <span className="text-slate-500">Показаны результаты для</span>
+                <span className="font-semibold text-slate-800">&quot;{queryMeta.canonical}&quot;</span>
+                <span className="text-slate-400">·</span>
+                <a
+                  href={`/results?q=${encodeURIComponent(queryMeta.original)}&no_correct=1${includeKufar ? '&include_kufar=true' : ''}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    router.push(`/results?q=${encodeURIComponent(queryMeta.original)}&no_correct=1${includeKufar ? '&include_kufar=true' : ''}`);
+                  }}
+                  className="text-violet-600 hover:underline"
+                >
+                  Искать &quot;{queryMeta.original}&quot;
+                </a>
+              </div>
+            )}
             <p className="text-xs text-slate-500">
               {isLoading
                 ? 'Поиск...'
