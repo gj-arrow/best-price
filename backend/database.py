@@ -2,9 +2,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import declarative_base
 
 try:
-    from config import DATABASE_URL
-except ModuleNotFoundError:
     from backend.config import DATABASE_URL
+except ModuleNotFoundError:
+    from config import DATABASE_URL
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 

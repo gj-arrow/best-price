@@ -1,9 +1,22 @@
 from dataclasses import dataclass
-from backend.normalizer.translit import transliterate
-from backend.normalizer.fuzzy_dict import fuzzy_match
-from backend.normalizer.llm_normalizer import llm_normalize
-from backend.normalizer.cache import get_cached, set_cached
 import os
+
+try:
+    from backend.normalizer.translit import transliterate
+except ModuleNotFoundError:
+    from normalizer.translit import transliterate
+try:
+    from backend.normalizer.fuzzy_dict import fuzzy_match
+except ModuleNotFoundError:
+    from normalizer.fuzzy_dict import fuzzy_match
+try:
+    from backend.normalizer.llm_normalizer import llm_normalize
+except ModuleNotFoundError:
+    from normalizer.llm_normalizer import llm_normalize
+try:
+    from backend.normalizer.cache import get_cached, set_cached
+except ModuleNotFoundError:
+    from normalizer.cache import get_cached, set_cached
 
 @dataclass
 class NormalizeResult:
