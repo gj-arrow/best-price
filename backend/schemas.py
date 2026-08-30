@@ -22,12 +22,21 @@ class ProductResponse(ProductBase):
         from_attributes = True
 
 
+class QueryMeta(BaseModel):
+    original: str
+    canonical: str
+    corrected: bool
+    confidence: float
+    category: Optional[str] = None
+
+
 class SearchResult(BaseModel):
     query: str
     products: list[ProductResponse] = []
     min_price: float = 0
     max_price: float = 0
     total_results: int = 0
+    query_meta: Optional[QueryMeta] = None
 
     class Config:
         from_attributes = True

@@ -2,7 +2,10 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 
-from database import Base
+try:
+    from database import Base
+except ModuleNotFoundError:
+    from backend.database import Base
 
 
 class Search(Base):
@@ -28,3 +31,13 @@ class Product(Base):
     cached_at = Column(DateTime, default=datetime.utcnow)
 
     search = relationship("Search", back_populates="products")
+
+
+class QueryNormalization(Base):
+    __tablename__ = "query_normalizations"
+    original = Column(String, primary_key=True)
+    canonical = Column(String, nullable=False)
+    confidence = Column(Float, nullable=False)
+    category = Column(String, nullable=True)
+    hits = Column(Integer, default=1)
+    updated_at = Column(DateTime, default=datetime.utcnow)
