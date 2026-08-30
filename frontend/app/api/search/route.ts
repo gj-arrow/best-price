@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export async function GET(request: NextRequest) {
@@ -11,7 +13,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 });
     }
 
-    const backendUrl = `${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}`;
+    const includeKufar = searchParams.get('include_kufar');
+    const backendUrl = `${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}${includeKufar === 'true' ? '&include_kufar=true' : ''}`;
     const response = await fetch(backendUrl);
 
     if (!response.ok) {

@@ -3,8 +3,22 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+// Площадки для поиска — единый источник истины, синхронизирован с backend ScraperAggregator + results/page.tsx
+const PLATFORMS = [
+  'Onliner.by',
+  'Wildberries',
+  'Ozon',
+  'Shop.by',
+  '1k.by',
+  '360shop.by',
+  '21vek.by',
+  '5element.by',
+  'AMD.by',
+  '7745.by',
+] as const;
+
 const features = [
-  { label: '6 магазинов', desc: 'Onliner.by, Wildberries, Ozon, Shop.by, 1k.by, 360shop.by' },
+  { label: `${PLATFORMS.length} площадок`, desc: PLATFORMS.slice(0, 6).join(', ') + ' и др.' },
   { label: 'Реальные цены', desc: 'Обновляются каждые 5 минут' },
   { label: 'Экономия', desc: 'Находим лучшую цену за вас' },
 ];
@@ -12,11 +26,15 @@ const features = [
 export default function HomePage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [includeKufar, setIncludeKufar] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      router.push(`/results?q=${encodeURIComponent(searchQuery.trim())}`);
+      setIsSearching(true);
+      const kufarParam = includeKufar ? '&include_kufar=true' : '';
+      router.push(`/results?q=${encodeURIComponent(searchQuery.trim())}${kufarParam}`);
     }
   };
 
@@ -31,7 +49,7 @@ export default function HomePage() {
             </div>
             <span className="text-lg font-bold text-slate-800">Best Price</span>
           </a>
-          <span className="text-xs text-slate-400">Поиск по 6 магазинам</span>
+          <span className="text-xs text-slate-400">Поиск по {PLATFORMS.length} площадкам</span>
         </div>
       </header>
 
@@ -44,7 +62,7 @@ export default function HomePage() {
               Сравните цены перед покупкой
             </h1>
             <p className="text-slate-500 mt-2 text-sm">
-              Поиск по 6 магазинам — находите лучшие предложения
+              Поиск по {PLATFORMS.length} площадкам — находите лучшие предложения
             </p>
           </div>
 
@@ -61,14 +79,51 @@ export default function HomePage() {
                 placeholder="Введите название товара..."
                 className="flex-1 bg-transparent text-slate-800 placeholder-slate-400 outline-none text-[15px]"
                 autoFocus
+                disabled={isSearching}
               />
               <button
                 type="submit"
-                className="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white font-medium text-sm rounded-lg transition-colors whitespace-nowrap"
+                disabled={isSearching}
+                className={`px-5 py-2 text-white font-medium text-sm rounded-lg transition-colors whitespace-nowrap flex items-center gap-2 ${
+                  isSearching ? 'bg-violet-400 cursor-wait' : 'bg-violet-600 hover:bg-violet-700'
+                }`}
               >
-                Найти
+                {isSearching && (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" aria-hidden />
+                )}
+                {isSearching ? 'Поиск...' : 'Найти'}
               </button>
             </div>
+            {/* Прогресс поиска + Kufar toggle */}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setIncludeKufar(!includeKufar)}
+                title={includeKufar ? 'Kufar (б/у) включён — нажмите чтобы убрать' : 'Включить Kufar (б/у) в поиск'}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap ${
+                  includeKufar
+                    ? 'bg-amber-500 border-amber-500 text-white'
+                    : 'bg-white border-slate-200 text-slate-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
+                }`}
+              >
+                Kufar (б/у)
+              </button>
+              {isSearching ? (
+                <div className="flex items-center gap-2 text-xs text-violet-600" role="status" aria-live="polite">
+                  <span className="w-3 h-3 border-2 border-violet-200 border-t-violet-600 rounded-full animate-spin" />
+                  Идёт поиск по {PLATFORMS.length} площадкам…
+                </div>
+              ) : (
+                <span className="text-[11px] text-slate-400">
+                  {PLATFORMS.join(' · ')}
+                </span>
+              )}
+            </div>
+            {isSearching && (
+              <div className="mt-3 h-1 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-violet-600 rounded-full animate-pulse" style={{ width: '40%' }} />
+              </div>
+            )}
           </form>
 
           {/* Trust features */}

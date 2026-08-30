@@ -28,6 +28,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   storeUrl = '#',
   className = '',
 }) => {
+  const formatPrice = (value: number): string => {
+    const fixed = value.toFixed(1);
+    // если целое — без десятых, иначе с одной десятой
+    return Number.isInteger(value) ? String(Math.round(value)) : fixed;
+  };
+
   const hasDiscount = originalPrice !== undefined && originalPrice > price;
   const discountPercent = hasDiscount
     ? Math.round(((originalPrice - price) / originalPrice) * 100)
@@ -51,9 +57,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         <div className={styles.priceRow}>
           <div className={styles.priceWrapper}>
-            <span className={styles.price}>{currency}{Math.round(price)}</span>
+            <span className={styles.price}>{currency}{formatPrice(price)}</span>
             {hasDiscount && (
-              <span className={styles.originalPrice}>{currency}{Math.round(originalPrice)}</span>
+              <span className={styles.originalPrice}>{currency}{formatPrice(originalPrice!)}</span>
             )}
           </div>
           {hasDiscount && (

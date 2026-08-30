@@ -27,6 +27,7 @@ function ResultsContent() {
   const [totalResults, setTotalResults] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'relevance' | 'price-asc' | 'price-desc'>('relevance');
+  const [includeKufar, setIncludeKufar] = useState(() => searchParams.get('include_kufar') === 'true');
 
   useEffect(() => {
     if (!query) {
@@ -38,7 +39,8 @@ function ResultsContent() {
     setIsLoading(true);
     setError(null);
 
-    fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`)
+    const kufarParam = includeKufar ? '&include_kufar=true' : '';
+    fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}${kufarParam}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Ошибка ${res.status}`);
         return res.json();
@@ -61,7 +63,7 @@ function ResultsContent() {
         setTotalResults(0);
       })
       .finally(() => setIsLoading(false));
-  }, [query]);
+  }, [query, includeKufar]);
 
   useEffect(() => {
     if (sortBy === 'relevance') return; // API returns by relevance already
@@ -77,19 +79,28 @@ function ResultsContent() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      router.push(`/results?q=${encodeURIComponent(searchQuery.trim())}`);
+      const kufarParam = includeKufar ? '&include_kufar=true' : '';
+      router.push(`/results?q=${encodeURIComponent(searchQuery.trim())}${kufarParam}`);
     }
   };
 
+  const formatPrice = (value: number): string =>
+    Number.isInteger(value) ? String(Math.round(value)) : value.toFixed(1);
+
+  const baseStores = ['Onliner.by', 'Wildberries', 'Ozon', 'Shop.by', '1k.by', '360shop.by', '21vek.by', '5element.by', 'AMD.by', '7745.by'];
+  const storeList = includeKufar ? [...baseStores, 'Kufar.by (б/у)'] : baseStores;
+
+  // Google AI (РФ) — отдельный баннер, не в общей сетке как обычный товар
+  const googleAiProduct = products.find((p) => p.storeName?.includes('Google AI'));
+  const regularProducts = products.filter((p) => !p.storeName?.includes('Google AI'));
+
   const priceRange =
-    products.length > 0
+    regularProducts.length > 0
       ? {
-          min: Math.min(...products.map((p) => p.price)),
-          max: Math.max(...products.map((p) => p.price)),
+          min: Math.min(...regularProducts.map((p) => p.price)),
+          max: Math.max(...regularProducts.map((p) => p.price)),
         }
       : { min: 0, max: 0 };
-
-  const storeList = ['Onliner.by', 'Wildberries', 'Ozon', 'Shop.by', '1k.by', '360shop.by'];
 
   return (
     <div className="min-h-screen bg-[#f5f6fa] flex flex-col">
@@ -156,16 +167,28 @@ function ResultsContent() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {products.length > 0 && (
+            {regularProducts.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs">
                 <span className="text-slate-400">Цены:</span>
                 <span className="font-semibold text-emerald-600">
-                  {priceRange.min} BYN
+                  {formatPrice(priceRange.min)} BYN
                 </span>
                 <span className="text-slate-300">—</span>
-                <span className="font-semibold text-red-500">{priceRange.max} BYN</span>
+                <span className="font-semibold text-red-500">{formatPrice(priceRange.max)} BYN</span>
               </div>
             )}
+            <button
+              onClick={() => setIncludeKufar(!includeKufar)}
+              aria-pressed={includeKufar}
+              title={includeKufar ? 'Kufar (б/у) включён — нажмите чтобы убрать' : 'Включить Kufar (б/у) в поиск'}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                includeKufar
+                  ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
+              }`}
+            >
+              Kufar (б/у)
+            </button>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
@@ -177,6 +200,38 @@ function ResultsContent() {
             </select>
           </div>
         </div>
+
+        {/* Google AI (РФ) — примерная цена */}
+        {googleAiProduct && !isLoading && !error && (
+          <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                <span className="text-white text-[10px] font-bold">AI</span>
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                  Примерная цена в РФ
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded">Google AI</span>
+                  <span className="text-[10px] text-slate-400 font-normal">оценка</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  По данным Google AI Mode •{' '}
+                  <a href={googleAiProduct.storeUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    проверить в Google
+                  </a>
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-lg font-bold text-blue-700">
+                {formatPrice(googleAiProduct.price)} BYN
+              </div>
+              <div className="text-xs text-slate-500">
+                ~{Math.round(googleAiProduct.price / 0.0388).toLocaleString('ru-RU')} ₽
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Products grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -204,8 +259,8 @@ function ResultsContent() {
                 Повторить
               </button>
             </div>
-          ) : products.length > 0 ? (
-            products.map((product, i) => (
+          ) : regularProducts.length > 0 ? (
+            regularProducts.map((product, i) => (
               <div
                 key={`${product.name}-${i}`}
                 className="animate-[fadeIn_0.3s_ease-out]"

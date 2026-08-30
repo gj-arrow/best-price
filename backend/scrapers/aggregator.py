@@ -11,18 +11,31 @@ from .ozon import OzonScraper
 from .shopby import ShopByScraper
 from .home1k import Home1kScraper
 from .shop360 import Shop360Scraper
+from .v21vek import V21VekScraper
+from .kufar import KufarScraper
+from .five_element import FiveElementScraper
+from .amd import AmdScraper
+from .shop7745 import Shop7745Scraper
+from .google_ai import GoogleAiScraper
 
 
 class ScraperAggregator:
     """
     Aggregates multiple store scrapers for concurrent product search.
-    
-    Initializes all 6 scrapers (Onliner, WB, Ozon, Shop.by, Home1k, 360shop)
+
+    Initializes 10 base scrapers (Onliner, WB, Ozon, Shop.by, Home1k, 360shop,
+    21vek, 5element, AMD, 7745) + optional Kufar (б/у) + Google AI (РФ)
     and provides unified search interface with concurrent execution.
     """
 
-    def __init__(self):
-        """Initialize all 6 scrapers."""
+    def __init__(self, include_kufar: bool = False):
+        """Initialize scrapers.
+
+        Args:
+            include_kufar: if True, include Kufar.by (used goods) in search.
+                           Kufar is opt-in via the "Добавить Kufar" button
+                           because many users don't want б/у items.
+        """
         self.scrapers = [
             OnlinerScraper(),
             WildberriesScraper(),
@@ -30,7 +43,14 @@ class ScraperAggregator:
             ShopByScraper(),
             Home1kScraper(),
             Shop360Scraper(),
+            V21VekScraper(),
+            FiveElementScraper(),
+            AmdScraper(),
+            Shop7745Scraper(),
         ]
+        self._kufar = KufarScraper()
+        self._google_ai = GoogleAiScraper()
+        self._include_kufar = include_kufar
 
     @staticmethod
     def _extract_query_words(query: str) -> list[str]:
@@ -134,25 +154,37 @@ class ScraperAggregator:
                     return True
         return False
 
-    async def search_all(self, query: str) -> list[ProductData]:
+    async def search_all(self, query: str, include_kufar: Optional[bool] = None, include_google_ai: bool = True) -> list[ProductData]:
         """
         Search all stores concurrently for products matching the query.
         
         Uses asyncio.gather for concurrent execution with graceful degradation.
         If a scraper fails, its results are silently skipped and other results
         are still returned. Results are sorted by price (ascending).
-        
+
         Args:
             query: Search term/product name
+            include_kufar: if True include Kufar.by (б/у)
+            include_google_ai: if True include Google AI (РФ) estimate
             
         Returns:
             List of ProductData objects from all stores, sorted by price
         """
+        # Resolve include_kufar (method param overrides constructor default)
+        use_kufar = include_kufar if include_kufar is not None else self._include_kufar
+
         # Extract significant query words for relevance filtering
         query_words = self._extract_query_words(query)
 
-        # Create search tasks for all scrapers
-        search_tasks = [scraper.search(query) for scraper in self.scrapers]
+        # Create search tasks for all scrapers (+ optional Kufar + Google AI)
+        scrapers_to_run = list(self.scrapers)
+        if use_kufar:
+            scrapers_to_run.append(self._kufar)
+        # Google AI (РФ) — всегда пробуем, быстрый фолбэк ~6с
+        # Не блокируем основной поиск: запускаем параллельно
+        if include_google_ai:
+            scrapers_to_run.append(self._google_ai)
+        search_tasks = [scraper.search(query) for scraper in scrapers_to_run]
 
         # Execute all searches concurrently with graceful degradation
         results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -188,7 +220,8 @@ class ScraperAggregator:
 
     async def close(self) -> None:
         """Clean up resources for all scrapers."""
+        all_scrapers = list(self.scrapers) + [self._kufar, self._google_ai]
         await asyncio.gather(
-            *[scraper.close() for scraper in self.scrapers],
+            *[scraper.close() for scraper in all_scrapers],
             return_exceptions=True
         )

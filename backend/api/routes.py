@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api", tags=["search"])
 
 
 @router.get("/search", response_model=SearchResult)
-async def search_products(q: str, db: AsyncSession = Depends(get_db)):
+async def search_products(q: str, include_kufar: bool = False, db: AsyncSession = Depends(get_db)):
     if not q or len(q) < 2:
         raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
     
@@ -18,9 +18,9 @@ async def search_products(q: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(search)
     
-    aggregator = ScraperAggregator()
+    aggregator = ScraperAggregator(include_kufar=include_kufar)
     try:
-        products_data = await aggregator.search_all(q)
+        products_data = await aggregator.search_all(q, include_kufar=include_kufar)
     finally:
         await aggregator.close()
     
