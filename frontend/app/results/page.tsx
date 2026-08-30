@@ -105,21 +105,21 @@ function ResultsContent() {
   return (
     <div className="min-h-screen bg-[#f5f6fa] flex flex-col">
       {/* Header with search */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <a href="/" className="flex items-center gap-1.5 shrink-0">
-              <div className="w-7 h-7 bg-violet-600 rounded-md flex items-center justify-center">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200 supports-[backdrop-filter]:bg-white/70">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <a href="/" className="flex items-center gap-1.5 shrink-0" aria-label="На главную">
+              <div className="w-8 h-8 sm:w-7 sm:h-7 bg-violet-600 rounded-md flex items-center justify-center">
                 <span className="text-white font-bold text-[11px]">B</span>
               </div>
               <span className="text-sm font-bold text-slate-800 hidden sm:inline">
                 Best Price
               </span>
             </a>
-            <form onSubmit={handleSearch} className="flex-1 flex gap-2">
-              <div className="relative flex-1 max-w-lg">
+            <form onSubmit={handleSearch} className="flex-1 flex gap-1.5 sm:gap-2 min-w-0">
+              <div className="relative flex-1 max-w-lg min-w-0">
                 <svg
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -136,12 +136,15 @@ function ResultsContent() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Поиск товаров..."
-                  className="w-full pl-9 pr-3 py-2 bg-slate-100 rounded-lg text-sm text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:ring-2 focus:ring-violet-200 transition-all"
+                  className="w-full pl-9 pr-3 py-2.5 sm:py-2 bg-slate-100 rounded-xl sm:rounded-lg text-base sm:text-sm text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:ring-2 focus:ring-violet-200 transition-all"
+                  inputMode="search"
+                  autoComplete="off"
+                  enterKeyHint="search"
                 />
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white font-medium text-sm rounded-lg transition-colors"
+                className="px-4 sm:px-4 py-2.5 sm:py-2 bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-medium text-sm rounded-xl sm:rounded-lg transition-colors shrink-0 min-h-[44px] sm:min-h-0"
               >
                 Найти
               </button>
@@ -151,11 +154,11 @@ function ResultsContent() {
       </header>
 
       {/* Content */}
-      <main className="flex-1 max-w-6xl mx-auto px-4 py-5 w-full">
+      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-5 w-full">
         {/* Results toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div>
-            <h1 className="text-lg font-bold text-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-5">
+          <div className="min-w-0">
+            <h1 className="text-[17px] sm:text-lg font-bold text-slate-800 truncate">
               {query ? `«${query}»` : 'Все товары'}
             </h1>
             <p className="text-xs text-slate-500">
@@ -166,10 +169,10 @@ function ResultsContent() {
                   : `Найдено ${totalResults} товаров`}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {regularProducts.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs">
-                <span className="text-slate-400">Цены:</span>
+              <div className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs whitespace-nowrap">
+                <span className="text-slate-400 hidden xs:inline">Цены:</span>
                 <span className="font-semibold text-emerald-600">
                   {formatPrice(priceRange.min)} BYN
                 </span>
@@ -181,7 +184,7 @@ function ResultsContent() {
               onClick={() => setIncludeKufar(!includeKufar)}
               aria-pressed={includeKufar}
               title={includeKufar ? 'Kufar (б/у) включён — нажмите чтобы убрать' : 'Включить Kufar (б/у) в поиск'}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+              className={`px-3 py-2 sm:py-1.5 rounded-xl sm:rounded-lg text-xs sm:text-sm font-medium border transition-colors whitespace-nowrap min-h-[36px] sm:min-h-0 flex-1 sm:flex-none justify-center ${
                 includeKufar
                   ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
@@ -192,7 +195,7 @@ function ResultsContent() {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 outline-none focus:ring-2 focus:ring-violet-200"
+              className="flex-1 sm:flex-none min-w-[140px] px-3 py-2 sm:py-1.5 bg-white border border-slate-200 rounded-xl sm:rounded-lg text-xs sm:text-sm text-slate-600 outline-none focus:ring-2 focus:ring-violet-200 min-h-[36px] sm:min-h-0"
             >
               <option value="relevance">По релевантности</option>
               <option value="price-asc">Сначала дешёвые</option>
@@ -203,13 +206,13 @@ function ResultsContent() {
 
         {/* Google AI (РФ) — примерная цена */}
         {googleAiProduct && !isLoading && !error && (
-          <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+          <div className="mb-4 p-3 sm:p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
                 <span className="text-white text-[10px] font-bold">AI</span>
               </div>
-              <div>
-                <div className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-800 flex flex-wrap items-center gap-1.5">
                   Примерная цена в РФ
                   <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded">Google AI</span>
                   <span className="text-[10px] text-slate-400 font-normal">оценка</span>
@@ -222,7 +225,7 @@ function ResultsContent() {
                 </div>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-left sm:text-right shrink-0">
               <div className="text-lg font-bold text-blue-700">
                 {formatPrice(googleAiProduct.price)} BYN
               </div>
@@ -234,7 +237,7 @@ function ResultsContent() {
         )}
 
         {/* Products grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           {isLoading ? (
             Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="bg-white rounded-xl border border-slate-200 overflow-hidden">

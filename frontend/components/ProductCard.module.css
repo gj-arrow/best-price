@@ -175,3 +175,32 @@
   width: 14px;
   height: 14px;
 }
+
+@media (max-width: 640px) {
+  .card {
+    border-radius: 14px;
+  }
+
+  .imageWrapper {
+    height: 160px;
+  }
+
+  .content {
+    padding: 10px;
+  }
+
+  .name {
+    font-size: 13px;
+  }
+
+  .price {
+    font-size: 16px;
+  }
+
+  .buyButton {
+    padding: 11px 14px;
+    font-size: 14px;
+    min-height: 44px;
+    border-radius: 10px;
+  }
+}
