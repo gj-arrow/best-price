@@ -11,3 +11,5 @@ curl-cffi>=0.15.0
 playwright
 undetected-chromedriver>=3.5.0
 selenium>=4.20.0
+rapidfuzz==3.9.0
+openai==1.50.0
