@@ -1,8 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from database import init_db
-from api.routes import router
+try:
+    from backend.database import init_db
+    from backend.api.routes import router
+except ModuleNotFoundError:
+    from database import init_db  # type: ignore
+    from api.routes import router  # type: ignore
 
 
 @asynccontextmanager
